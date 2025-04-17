@@ -70,132 +70,95 @@ fn check_class_name_extends(root: tree_sitter::Node, source: Arc<str>) {
     let mut matches = query_cursor.matches(&query, root, source.as_bytes());
 
     while let Some(match_) = matches.next() {
-        let help = miette::miette!(
-            severity = miette::Severity::Warning,
-            help = "Ur facken retarded",
-            labels = vec![
-                miette::LabeledSpan::new_with_span(
-                    Some("swap this".into()),
-                    match_.captures[0].node.to_source_span(),
-                ),
-                miette::LabeledSpan::new_with_span(
-                    Some("with this".into()),
-                    match_.captures[1].node.to_source_span(),
-                )
-            ],
-            "{} should precede {}",
-            "class_name".red(),
-            "extends".red(),
+        println!(
+            "{:?}",
+            miette::miette!(
+                severity = miette::Severity::Warning,
+                code = "class-name-extends",
+                help = "Ur facken retarded",
+                labels = vec![
+                    miette::LabeledSpan::new_with_span(
+                        Some("swap this".into()),
+                        match_.captures[0].node.to_source_span(),
+                    ),
+                    miette::LabeledSpan::new_with_span(
+                        Some("with this".into()),
+                        match_.captures[1].node.to_source_span(),
+                    )
+                ],
+                "{} should precede {}",
+                "class_name".red(),
+                "extends".red(),
+            )
+            .with_source_code(Arc::clone(&source))
         )
-        .with_source_code(Arc::clone(&source));
-        println!("{:?}", help);
     }
 
     tracing::info!("{}", "Class name and extends statements are valid.".green());
 }
 
-struct TopLevelDefinitionQuery<'tree> {
-    pub annotation: Option<tree_sitter::Node<'tree>>,
-    pub name: tree_sitter::Node<'tree>,
-    pub type_: Option<tree_sitter::Node<'tree>>,
-    pub interred_type: Option<tree_sitter::Node<'tree>>,
-    pub value: Option<tree_sitter::Node<'tree>>,
-}
-
-impl<'tree> TopLevelDefinitionQuery<'tree> {
-    fn query(root: tree_sitter::Node<'tree>, source: &str) -> Vec<Self> {
-        let query = tree_sitter::Query::new(
-            &tree_sitter_gdscript::LANGUAGE.into(),
-            r#"
-                (variable_statement
-                  (annotations
-                    (annotation (identifier) @annotation))?
-                  name: (name) @name
-                  type: [
-                    (type (identifier) @type)
-                    (inferred_type) @inferred_type]
-                  value: (_)? @value)
-            "#,
-        )
-        .expect("valid query");
-
-        let annotation_index = query
-            .capture_index_for_name("annotation")
-            .expect("valid capture index");
-        let name_index = query
-            .capture_index_for_name("name")
-            .expect("valid capture index");
-        let type_index = query
-            .capture_index_for_name("type")
-            .expect("valid capture index");
-        let inferred_type_index = query
-            .capture_index_for_name("inferred_type")
-            .expect("valid capture index");
-        let value_index = query
-            .capture_index_for_name("value")
-            .expect("valid capture index");
-
-        let mut query_cursor = tree_sitter::QueryCursor::new();
-        query_cursor.set_max_start_depth(Some(1));
-
-        let query_matches = query_cursor.matches(&query, root, source.as_bytes());
-
-        let (min_size, _) = query_matches.size_hint();
-        let mut matches = Vec::with_capacity(min_size);
-
-        query_matches.for_each(|match_| {
-            let mut captures = [Option::<&tree_sitter::QueryCapture>::None; 5];
-            for capture in match_.captures {
-                if capture.index == annotation_index {
-                    captures[0] = Some(capture);
-                } else if capture.index == name_index {
-                    captures[1] = Some(capture);
-                } else if capture.index == type_index {
-                    captures[2] = Some(capture);
-                } else if capture.index == inferred_type_index {
-                    captures[3] = Some(capture);
-                } else if capture.index == value_index {
-                    captures[4] = Some(capture);
-                }
-            }
-            matches.push(TopLevelDefinitionQuery {
-                annotation: captures[0].map(|c| c.node),
-                name: captures[1].expect("name capture").node,
-                type_: captures[2].map(|c| c.node),
-                interred_type: captures[3].map(|c| c.node),
-                value: captures[4].map(|c| c.node),
-            });
-        });
-        matches
-    }
-}
-
 fn check_export_var_order(root: tree_sitter::Node, source: Arc<str>) {
     assert!(root.kind() == "source", "Expected 'source' node");
 
-    for match_ in TopLevelDefinitionQuery::query(root, source.as_ref()) {
-        let mut statement = String::new();
+    let declarations = query_struct::TopLevelDefinitionQuery::query(root, source.as_bytes())
+        .into_iter()
+        .map(|result| {
+            let annotation = result
+                .annotation
+                .map(|annotation| annotation.text(source.as_ref()));
+            (result, annotation)
+        });
 
-        if let Some(annotation) = match_.annotation {
-            statement.push('@');
-            statement.push_str(annotation.text(source.as_ref()));
-            statement.push(' ');
-        }
-        statement.push_str("var ");
-        statement.push_str(match_.name.text(source.as_ref()));
-        if let Some(type_) = match_.type_ {
-            statement.push_str(": ");
-            statement.push_str(type_.text(source.as_ref()));
-        }
-        if let Some(value) = match_.value {
-            if let Some(_) = match_.interred_type {
-                statement.push_str(" := ");
-            } else {
-                statement.push_str(" = ");
+    let mut past_export = false;
+    let mut past_var = false;
+
+    for (declaration, annotation) in declarations {
+        match annotation {
+            Some("export") => {
+                if past_export {
+                    println!(
+                        "{:?}",
+                        miette::miette!(
+                            severity = miette::Severity::Warning,
+                            code = "export-order",
+                            help = "Ur facken retarded",
+                            labels = vec![miette::LabeledSpan::new_with_span(
+                                Some("out-of-order".into()),
+                                declaration.statement.to_source_span(),
+                            )],
+                            "export variables should precede normal variables and onready variables",
+                        )
+                        .with_source_code(Arc::clone(&source))
+                    )
+                }
             }
-            statement.push_str(value.text(source.as_ref()));
+            None => {
+                past_export = true;
+                if past_var {
+                    println!(
+                        "{:?}",
+                        miette::miette!(
+                            severity = miette::Severity::Warning,
+                            code = "export-order",
+                            help = "Ur facken retarded",
+                            labels = vec![miette::LabeledSpan::new_with_span(
+                                Some("out-of-order".into()),
+                                declaration.statement.to_source_span(),
+                            )],
+                            "normal variables should be between export variables and onready variables",
+                        )
+                        .with_source_code(Arc::clone(&source))
+                    )
+                }
+            }
+            Some("onready") => {
+                past_export = true;
+                past_var = true;
+            }
+            _ => {
+                tracing::warn!("Unknown annotation: {}", annotation.unwrap_or("unknown"));
+            }
         }
-        tracing::info!("Found variable statement: {:?}", statement);
     }
 }
 

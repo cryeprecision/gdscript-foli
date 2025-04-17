@@ -5,7 +5,7 @@ trait FromNodeCapture<'tree> {
 
 impl<'tree> FromNodeCapture<'tree> for tree_sitter::Node<'tree> {
     fn from_node_capture(node: Option<&tree_sitter::QueryCapture<'tree>>) -> Self {
-        node.expect("required node missing").node
+        node.map(|n| n.node).expect("required node missing")
     }
 }
 
@@ -25,7 +25,15 @@ where
 
 // A macro to define query structs with their field mappings
 macro_rules! define_query_struct {
-    ($name:ident, $query_str:expr, { $($field:ident : $capture:literal => $type:ty),* $(,)? }) => {
+    (
+        $name:ident,
+        $query_str:expr,
+        {
+            $($field:ident : $capture:literal => $type:ty),*
+            $(,)?
+        }
+    ) => {
+        #[allow(dead_code)]
         pub struct $name<'tree> {
             $(pub $field: $type),*
         }
@@ -38,7 +46,6 @@ macro_rules! define_query_struct {
                 ).expect("valid query");
                 let capture_count = query.capture_names().len();
 
-                // Get capture indices
                 $(
                 let $field = query.capture_index_for_name($capture)
                     .expect(&format!("valid capture index for {}", $capture)) as usize;
@@ -47,15 +54,12 @@ macro_rules! define_query_struct {
                 let mut query_cursor = ::tree_sitter::QueryCursor::new();
                 query_cursor.set_max_start_depth(Some(1));
 
-
                 use ::tree_sitter::StreamingIterator;
                 let query_matches = query_cursor.matches(&query, root, source);
                 let (min_size, _) = query_matches.size_hint();
 
                 let mut results = ::std::vec::Vec::with_capacity(min_size);
-
                 query_matches.for_each(|match_| {
-                    // Create a map of capture name to node
                     let mut captures = vec![::std::option::Option::None; capture_count];
                     for capture in match_.captures {
                         $(
@@ -66,14 +70,12 @@ macro_rules! define_query_struct {
                         )*
                         panic!("unexpected capture index: {}", capture.index);
                     }
-
                     results.push(Self {
                         $(
                         $field: match_field_type::<$type>(captures[$field]),
                         )*
                     });
                 });
-
                 results
             }
         }
@@ -83,17 +85,21 @@ macro_rules! define_query_struct {
 define_query_struct!(
     TopLevelDefinitionQuery,
     r#"
-    (variable_statement
-      (annotations
-        (annotation (identifier) @annotation))?
-      name: (name) @name
-      type: (type (identifier) @type)
-      value: (_)? @value)
+        (variable_statement
+          (annotations
+            (annotation (identifier) @annotation))?
+          name: (name) @name
+          type: [
+            (type (identifier) @type)
+            (inferred_type) @inferred_type]?
+          value: (_)? @value) @statement
     "#,
     {
         annotation: "annotation" => Option<tree_sitter::Node<'tree>>,
         name: "name" => tree_sitter::Node<'tree>,
         type_: "type" => Option<tree_sitter::Node<'tree>>,
+        inferred_type: "inferred_type" => Option<tree_sitter::Node<'tree>>,
         value: "value" => Option<tree_sitter::Node<'tree>>,
+        statement: "statement" => tree_sitter::Node<'tree>,
     }
 );
