@@ -1,26 +1,44 @@
+use miette::{LabeledSpan, Severity};
+use tree_sitter::{Node, QueryCapture, QueryError};
+
 // A trait to convert from captured nodes to the right type
 trait FromNodeCapture<'tree> {
-    fn from_node_capture(node: Option<&tree_sitter::QueryCapture<'tree>>) -> Self;
+    fn from_node_capture(node: Option<&QueryCapture<'tree>>, name: &'static str) -> Self;
 }
 
-impl<'tree> FromNodeCapture<'tree> for tree_sitter::Node<'tree> {
-    fn from_node_capture(node: Option<&tree_sitter::QueryCapture<'tree>>) -> Self {
-        node.map(|n| n.node).expect("required node missing")
+impl<'tree> FromNodeCapture<'tree> for Node<'tree> {
+    fn from_node_capture(node: Option<&QueryCapture<'tree>>, name: &'static str) -> Self {
+        node.map(|n| n.node)
+            .unwrap_or_else(|| panic!("required node {name:?} missing"))
     }
 }
 
-impl<'tree> FromNodeCapture<'tree> for Option<tree_sitter::Node<'tree>> {
-    fn from_node_capture(node: Option<&tree_sitter::QueryCapture<'tree>>) -> Self {
+impl<'tree> FromNodeCapture<'tree> for Option<Node<'tree>> {
+    fn from_node_capture(node: Option<&QueryCapture<'tree>>, _name: &'static str) -> Self {
         node.map(|n| n.node)
     }
 }
 
 // Helper function to convert the node based on the expected type
-fn match_field_type<'tree, T>(node_opt: Option<&tree_sitter::QueryCapture<'tree>>) -> T
+fn match_field_type<'tree, T>(node_opt: Option<&QueryCapture<'tree>>, name: &'static str) -> T
 where
     T: FromNodeCapture<'tree>,
 {
-    T::from_node_capture(node_opt)
+    T::from_node_capture(node_opt, name)
+}
+
+fn format_query_error(err: QueryError, source: &[u8]) -> miette::Report {
+    miette::miette!(
+        severity = Severity::Error,
+        code = "query-error",
+        labels = vec![LabeledSpan::new(
+            Some(format!("{:?}", err.kind)),
+            err.offset,
+            0
+        )],
+        "Failed to construct tree-sitter query"
+    )
+    .with_source_code(source.to_owned())
 }
 
 // A macro to define query structs with their field mappings
@@ -33,17 +51,38 @@ macro_rules! define_query_struct {
             $(,)?
         }
     ) => {
+        define_query_struct!(
+            $name,
+            $query_str,
+            {
+                $($field : $capture => $type),*
+            },
+            max_start_depth = Some(1)
+        );
+    };
+    (
+        $name:ident,
+        $query_str:expr,
+        {
+            $($field:ident : $capture:literal => $type:ty),*
+            $(,)?
+        },
+        max_start_depth = $max_depth:expr
+    ) => {
         #[allow(dead_code)]
+        #[derive(Debug)]
         pub struct $name<'tree> {
+            pub match_id: usize,
             $(pub $field: $type),*
         }
 
         impl<'tree> $name<'tree> {
             pub fn query(root: ::tree_sitter::Node<'tree>, source: &[u8]) -> ::std::vec::Vec<Self> {
+                let query_str = $query_str;
                 let query = ::tree_sitter::Query::new(
                     &::tree_sitter_gdscript::LANGUAGE.into(),
-                    $query_str,
-                ).expect("valid query");
+                    query_str,
+                ).map_err(|err| format_query_error(err, query_str.as_bytes())).expect("valid query");
                 let capture_count = query.capture_names().len();
 
                 $(
@@ -52,14 +91,13 @@ macro_rules! define_query_struct {
                 )*
 
                 let mut query_cursor = ::tree_sitter::QueryCursor::new();
-                query_cursor.set_max_start_depth(Some(1));
+                query_cursor.set_max_start_depth($max_depth);
 
                 use ::tree_sitter::StreamingIterator;
-                let query_matches = query_cursor.matches(&query, root, source);
-                let (min_size, _) = query_matches.size_hint();
+                let mut query_matches = query_cursor.matches(&query, root, source);
 
-                let mut results = ::std::vec::Vec::with_capacity(min_size);
-                query_matches.for_each(|match_| {
+                let mut results = ::std::vec::Vec::new();
+                while let Some(match_) = query_matches.next() {
                     let mut captures = vec![::std::option::Option::None; capture_count];
                     for capture in match_.captures {
                         $(
@@ -71,11 +109,15 @@ macro_rules! define_query_struct {
                         panic!("unexpected capture index: {}", capture.index);
                     }
                     results.push(Self {
+                        match_id: match_.id() as usize,
                         $(
-                        $field: match_field_type::<$type>(captures[$field]),
+                        $field: match_field_type::<$type>(
+                            captures[$field],
+                            stringify!($field),
+                        ),
                         )*
                     });
-                });
+                }
                 results
             }
         }
@@ -86,20 +128,63 @@ define_query_struct!(
     TopLevelDefinitionQuery,
     r#"
         (variable_statement
-          (annotations
-            (annotation (identifier) @annotation))?
-          name: (name) @name
-          type: [
-            (type (identifier) @type)
-            (inferred_type) @inferred_type]?
-          value: (_)? @value) @statement
+            (annotations
+                (annotation (identifier) @annotation))?
+            name: (name) @name
+            type: [
+                (type (identifier) @type)
+                (inferred_type) @inferred_type]?
+            value: (_)? @value) @statement
     "#,
     {
-        annotation: "annotation" => Option<tree_sitter::Node<'tree>>,
-        name: "name" => tree_sitter::Node<'tree>,
-        type_: "type" => Option<tree_sitter::Node<'tree>>,
-        inferred_type: "inferred_type" => Option<tree_sitter::Node<'tree>>,
-        value: "value" => Option<tree_sitter::Node<'tree>>,
-        statement: "statement" => tree_sitter::Node<'tree>,
+        annotation: "annotation" => Option<Node<'tree>>,
+        name: "name" => Node<'tree>,
+        type_: "type" => Option<Node<'tree>>,
+        inferred_type: "inferred_type" => Option<Node<'tree>>,
+        value: "value" => Option<Node<'tree>>,
+        statement: "statement" => Node<'tree>,
     }
+);
+
+define_query_struct!(
+    ClassNameExtendsQuery,
+    r#"
+        (_
+            (extends_statement (type (identifier))) @extends
+            (class_name_statement (name)) @class_name) @statement
+    "#,
+    {
+        extends: "extends" => Node<'tree>,
+        class_name: "class_name" => Node<'tree>,
+        statement: "statement" => Node<'tree>,
+    }
+);
+
+define_query_struct!(
+    FunctionDefinitionQuery,
+    r#"
+        (function_definition
+            name: (name) @name
+            parameters: (parameters (_)? @parameters) @parameters_list
+            return_type: (_)? @return_type)
+    "#,
+    {
+        name: "name" => Node<'tree>,
+        parameters: "parameters" => Option<Node<'tree>>,
+        return_type: "return_type" => Option<Node<'tree>>,
+        parameters_list: "parameters_list" => Node<'tree>,
+    }
+);
+
+define_query_struct!(
+    PrintCallQuery,
+    r#"
+        (call
+            (identifier) @print (#eq? @print "print")
+            (arguments (_)))
+    "#,
+    {
+        print: "print" => Node<'tree>,
+    },
+    max_start_depth = None
 );
