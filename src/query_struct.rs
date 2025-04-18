@@ -137,17 +137,20 @@ define_query_struct!(
 define_query_struct!(
     FunctionDefinitionQuery,
     r#"
-        (function_definition
-            name: (name) @name
-            parameters: (parameters (_)? @parameters) @parameters_list
-            return_type: (_)? @return_type)
+        (_ (
+            function_definition
+                name: (name) @name
+                parameters: (parameters (_)? @parameters) @parameters_list
+                return_type: (_)? @return_type))
     "#,
     {
         name: "name" => Node<'tree>,
         parameters: "parameters" => Option<Node<'tree>>,
         return_type: "return_type" => Option<Node<'tree>>,
         parameters_list: "parameters_list" => Node<'tree>,
-    }
+    },
+    // FIXME: I think this should be Some(0), but that doesn't work
+    max_start_depth = Some(1)
 );
 
 define_query_struct!(
