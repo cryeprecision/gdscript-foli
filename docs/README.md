@@ -15,3 +15,7 @@ This is a [GDScript](https://docs.godotengine.org/en/stable/tutorials/scripting/
 - [`tree-sitter`](https://lib.rs/crates/tree-sitter): Source code AST parser
   - [`tree-sitter-gdscript`](https://docs.rs/tree-sitter-gdscript/latest/tree_sitter_gdscript/)
   - [`tree-sitter-godot-resource`](https://docs.rs/tree-sitter-godot-resource/latest/tree_sitter_godot_resource/)
+
+## Example Lint
+
+![Linter warning example](./images/image.webp)
