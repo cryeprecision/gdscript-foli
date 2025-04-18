@@ -57,7 +57,7 @@ macro_rules! define_query_struct {
             {
                 $($field : $capture => $type),*
             },
-            max_start_depth = Some(1)
+            max_start_depth = Some(0)
         );
     };
     (
@@ -127,36 +127,10 @@ macro_rules! define_query_struct {
 define_query_struct!(
     TopLevelDefinitionQuery,
     r#"
-        (variable_statement
-            (annotations
-                (annotation (identifier) @annotation))?
-            name: (name) @name
-            type: [
-                (type (identifier) @type)
-                (inferred_type) @inferred_type]?
-            value: (_)? @value) @statement
+        (_ (_) @definition)
     "#,
     {
-        annotation: "annotation" => Option<Node<'tree>>,
-        name: "name" => Node<'tree>,
-        type_: "type" => Option<Node<'tree>>,
-        inferred_type: "inferred_type" => Option<Node<'tree>>,
-        value: "value" => Option<Node<'tree>>,
-        statement: "statement" => Node<'tree>,
-    }
-);
-
-define_query_struct!(
-    ClassNameExtendsQuery,
-    r#"
-        (_
-            (extends_statement (type (identifier))) @extends
-            (class_name_statement (name)) @class_name) @statement
-    "#,
-    {
-        extends: "extends" => Node<'tree>,
-        class_name: "class_name" => Node<'tree>,
-        statement: "statement" => Node<'tree>,
+        definition: "definition" => Node<'tree>,
     }
 );
 

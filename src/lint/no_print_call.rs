@@ -20,7 +20,8 @@ pub fn check_no_print_call(root: Node, source: Arc<str>) -> Vec<Report> {
                     Some("What were you thinking?!".into()),
                     statement.print.to_source_span(),
                 )],
-                "calling print is discouraged, use a custom logger",
+                help = "print statements ruined my marriage and poisoned my well",
+                "calling print is discouraged, use a custom logger instead",
             )
             .with_source_code(Arc::clone(&source)),
         );

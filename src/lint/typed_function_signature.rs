@@ -6,7 +6,6 @@ use tree_sitter::Node;
 use crate::{NodeExt, query_struct::FunctionDefinitionQuery};
 
 struct Definition<'tree> {
-    name: Node<'tree>,
     ret: Option<Node<'tree>>,
     params: Vec<Node<'tree>>,
     param_list: Node<'tree>,
@@ -28,7 +27,6 @@ pub fn check_typed_function_signature(root: Node, source: Arc<str>) -> Vec<Repor
                     }
                 })
                 .or_insert_with(|| Definition {
-                    name: result.name,
                     ret: result.return_type,
                     params: match result.parameters {
                         Some(param) => vec![param],

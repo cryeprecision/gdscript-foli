@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use node_ext::NodeExt;
-use query_struct::FunctionDefinitionQuery;
 
 mod format;
 mod lint;
@@ -12,10 +11,10 @@ mod util;
 
 fn run_checks(root: tree_sitter::Node, source: Arc<str>) {
     static CHECK_FNS: &[lint::CheckFn] = &[
-        lint::check_class_name_extends,
         lint::check_export_var_order,
         lint::check_typed_function_signature,
         lint::check_no_print_call,
+        lint::check_naming_convention,
     ];
 
     assert!(root.kind() == "source", "Expected 'source' node");
@@ -109,16 +108,6 @@ fn main() -> anyhow::Result<()> {
         // dump tree
         // let mut cursor = tree.walk();
         // dump_tree(&mut cursor, content.as_ref()).context("failed to dump tree")?;
-
-        let results = FunctionDefinitionQuery::query(tree.root_node(), content.as_bytes());
-        for result in results {
-            tracing::warn!(
-                "name: {:?}, params: {:?}, ret: {:?}",
-                result.name.text(content.as_bytes()),
-                result.parameters.map(|node| node.text(content.as_bytes())),
-                result.return_type.map(|node| node.text(content.as_bytes())),
-            );
-        }
 
         // process
         run_checks(tree.root_node(), content);
